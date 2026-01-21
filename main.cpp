@@ -808,6 +808,8 @@ void parse_project(DB& db, const std::vector<File>& files, Pass pass) {
     PyObject* IfExpType = PyObject_GetAttrString(ast, "IfExp");
     PyObject* iter_children = PyObject_GetAttrString(ast, "iter_child_nodes");
     PyObject* builtins_mod = PyImport_ImportModule("builtins");
+    PyObject* ImportType = PyObject_GetAttrString(ast, "Import");
+    PyObject* ImportFromType = PyObject_GetAttrString(ast, "ImportFrom");
 
     std::vector<std::unordered_map<std::string, int>> var_type_stack; //типы локальных переменных по областям видимости
     std::unordered_map<int, std::unordered_map<std::string, int>> class_attr_types; // class_id: {attr_name: type_id}, типы атрибутов классов
@@ -1106,6 +1108,80 @@ void parse_project(DB& db, const std::vector<File>& files, Pass pass) {
                         Py_DECREF(func);
                     }
                 }
+
+                if (PyObject_IsInstance(node, ImportType)) {
+                    PyObject* names = PyObject_GetAttrString(node, "names");
+                    if (names && PyList_Check(names)) {
+                        Py_ssize_t n = PyList_Size(names);
+                        for (Py_ssize_t i = 0; i < n; i++) {
+                            PyObject* alias = PyList_GetItem(names, i);
+                            if (alias) {
+                                PyObject* name_obj = PyObject_GetAttrString(alias, "name");
+                                if (name_obj) {
+                                    const char* module_c = PyUnicode_AsUTF8(name_obj);
+                                    std::string module = module_c ? module_c : "";
+                                    
+                                    PyObject* asname_obj = PyObject_GetAttrString(alias, "asname");
+                                    std::string imported_name = module;
+                                    if (asname_obj && asname_obj != Py_None) {
+                                        const char* asname_c = PyUnicode_AsUTF8(asname_obj);
+                                        if (asname_c) imported_name = asname_c;
+                                    }
+                                    
+                                    if (!module.empty()) {
+                                        db.add_import(f.id, module, imported_name);
+                                    }
+                                    
+                                    Py_XDECREF(name_obj);
+                                    Py_XDECREF(asname_obj);
+                                }
+                            }
+                        }
+                    }
+                    Py_XDECREF(names);
+                }
+                
+                //from module import name
+                else if (PyObject_IsInstance(node, ImportFromType)) {
+                    PyObject* module_obj = PyObject_GetAttrString(node, "module");
+                    std::string module = "";
+                    if (module_obj && module_obj != Py_None) {
+                        const char* module_c = PyUnicode_AsUTF8(module_obj);
+                        module = module_c ? module_c : "";
+                    }
+                    Py_XDECREF(module_obj);
+                    
+                    PyObject* names = PyObject_GetAttrString(node, "names");
+                    if (names && PyList_Check(names)) {
+                        Py_ssize_t n = PyList_Size(names);
+                        for (Py_ssize_t i = 0; i < n; i++) {
+                            PyObject* alias = PyList_GetItem(names, i);
+                            if (alias) {
+                                PyObject* name_obj = PyObject_GetAttrString(alias, "name");
+                                if (name_obj) {
+                                    const char* name_c = PyUnicode_AsUTF8(name_obj);
+                                    std::string name = name_c ? name_c : "";
+                                    
+                                    PyObject* asname_obj = PyObject_GetAttrString(alias, "asname");
+                                    std::string imported_name = name;
+                                    if (asname_obj && asname_obj != Py_None) {
+                                        const char* asname_c = PyUnicode_AsUTF8(asname_obj);
+                                        if (asname_c) imported_name = asname_c;
+                                    }
+                                    
+                                    if (!name.empty()) {
+                                        db.add_import(f.id, module, imported_name);
+                                    }
+                                    
+                                    Py_XDECREF(name_obj);
+                                    Py_XDECREF(asname_obj);
+                                }
+                            }
+                        }
+                    }
+                    Py_XDECREF(names);
+                }
+
             }
 
             //dfs
